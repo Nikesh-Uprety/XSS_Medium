@@ -236,7 +236,7 @@ async function simulateAdminBot(profileLink, message) {
     try {
         // Log the message being processed
         console.log('Admin bot processing message:', message);
-        const flag = process.env.FLAG || 'FLAG{guestbook_default_flag}';
+        const flag = process.env.FLAG ;
         // Simulate cookie with flag
         const adminCookie = `session=admin; flag=${flag}`;
         // Check for common XSS payload patterns

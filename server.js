@@ -8,8 +8,19 @@ const port = 3000;
 // Initialize SQLite database
 const db = new sqlite3.Database(':memory:');
 db.serialize(() => {
-    db.run('CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, message TEXT)');
+  db.run('CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, message TEXT)');
 });
+
+// Clear messages every 1 minute (60,000 milliseconds)
+setInterval(() => {
+  db.run('DELETE FROM messages', (err) => {
+    if (err) {
+      console.error('Error clearing messages:', err.message);
+    } else {
+      console.log('Guestbook messages cleared');
+    }
+  });
+}, 60000);
 
 // Middleware to parse form data and serve static content
 app.use(express.urlencoded({ extended: true }));
@@ -17,22 +28,22 @@ app.use(express.json());
 
 // Basic XSS filter (blocks common payloads but allows specific vectors)
 function filterXSS(input) {
-    return input
-        .replace(/<script/gi, '<script')
-        .replace(/<\/script/gi, '</script')
-        .replace(/on\w+ *= */gi, 'forbidden')
-        .replace(/javascript:/gi, 'forbidden:')
-        .replace(/alert/gi, 'forbidden');
+  return input
+    .replace(/<script/gi, '<script')
+    .replace(/<\/script/gi, '</script')
+    .replace(/on\w+ *= */gi, 'forbidden')
+    .replace(/javascript:/gi, 'forbidden:')
+    .replace(/alert/gi, 'forbidden');
 }
 
 // Serve the main guestbook page
 app.get('/', (req, res) => {
-    db.all('SELECT message FROM messages', [], (err, rows) => {
-        if (err) {
-            return res.status(500).send('Database error');
-        }
-        const messages = rows.map(row => `<div class="message">${row.message}</div>`).join('');
-        const html = `
+  db.all('SELECT message FROM messages', [], (err, rows) => {
+    if (err) {
+      return res.status(500).send('Database error');
+    }
+    const messages = rows.map(row => `<div class="message">${row.message}</div>`).join('');
+    const html = `
       <!DOCTYPE html>
       <html lang="en">
       <head>
@@ -205,61 +216,61 @@ app.get('/', (req, res) => {
       </body>
       </html>
     `;
-        res.send(html);
-    });
+    res.send(html);
+  });
 });
 
 // Handle message submission
 app.post('/message', (req, res) => {
-    const { message, profileLink } = req.body;
-    if (!message) {
-        return res.status(400).send('Message is required');
+  const { message, profileLink } = req.body;
+  if (!message) {
+    return res.status(400).send('Message is required');
+  }
+  if (profileLink && !profileLink.match(/^https?:\/\//)) {
+    return res.status(400).send('Profile link must be a valid HTTP/HTTPS URL');
+  }
+  const filteredMessage = filterXSS(message);
+  db.run('INSERT INTO messages (message) VALUES (?)', [filteredMessage], async (err) => {
+    if (err) {
+      return res.status(500).send('Error saving message');
     }
-    if (profileLink && !profileLink.match(/^https?:\/\//)) {
-        return res.status(400).send('Profile link must be a valid HTTP/HTTPS URL');
+    // Simulate admin bot visiting the page
+    if (profileLink) {
+      await simulateAdminBot(profileLink, filteredMessage);
     }
-    const filteredMessage = filterXSS(message);
-    db.run('INSERT INTO messages (message) VALUES (?)', [filteredMessage], async (err) => {
-        if (err) {
-            return res.status(500).send('Error saving message');
-        }
-        // Simulate admin bot visiting the page
-        if (profileLink) {
-            await simulateAdminBot(profileLink, filteredMessage);
-        }
-        res.redirect('/');
-    });
+    res.redirect('/');
+  });
 });
 
 // Simulate admin bot visiting the page and executing payloads
 async function simulateAdminBot(profileLink, message) {
-    try {
-        // Log the message being processed
-        console.log('Admin bot processing message:', message);
-        const flag = process.env.FLAG ;
-        // Simulate cookie with flag
-        const adminCookie = `session=admin; flag=${flag}`;
-        // Check for common XSS payload patterns
-        if (message.includes('fetch') || message.includes('document.cookie') || message.includes('onerror') || message.includes('onload')) {
-            console.log('XSS payload detected, sending cookie to:', profileLink);
-            try {
-                // Simulate the fetch request from the payload
-                await axios.get(`${profileLink}?cookie=${encodeURIComponent(adminCookie)}`, {
-                    timeout: 5000 // Add timeout to prevent hanging
-                });
-                console.log('Successfully sent cookie to:', profileLink);
-            } catch (error) {
-                console.error('Error sending to profile link:', error.message);
-            }
-        } else {
-            console.log('No XSS payload detected in message');
-        }
-    } catch (error) {
-        console.error('Bot error:', error.message);
+  try {
+    // Log the message being processed
+    console.log('Admin bot processing message:', message);
+    const flag = process.env.FLAG || 'FLAG{guestbook_default_flag}';
+    // Simulate cookie with flag
+    const adminCookie = `session=admin; flag=${flag}`;
+    // Check for common XSS payload patterns
+    if (message.includes('fetch') || message.includes('document.cookie') || message.includes('onerror') || message.includes('onload')) {
+      console.log('XSS payload detected, sending cookie to:', profileLink);
+      try {
+        // Simulate the fetch request from the payload
+        await axios.get(`${profileLink}?cookie=${encodeURIComponent(adminCookie)}`, {
+          timeout: 5000 // Add timeout to prevent hanging
+        });
+        console.log('Successfully sent cookie to:', profileLink);
+      } catch (error) {
+        console.error('Error sending to profile link:', error.message);
+      }
+    } else {
+      console.log('No XSS payload detected in message');
     }
+  } catch (error) {
+    console.error('Bot error:', error.message);
+  }
 }
 
 // Start the server
 app.listen(port, () => {
-    console.log(`Server running at http://localhost:${port}`);
+  console.log(`Server running at http://localhost:${port}`);
 });

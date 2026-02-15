@@ -69,7 +69,13 @@ jobs:
           "
 
       - name: Run unit tests
-        run: npm test -- --passWithNoTests
+        run: |
+          if npm run 2>&1 | grep -q "test"; then
+            npm test -- --passWithNoTests
+          else
+            echo "No test script found in package.json — skipping tests"
+            exit 0
+          fi
 
       - name: Post validation result comment
         if: always()

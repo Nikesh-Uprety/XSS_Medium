@@ -1,15 +1,13 @@
-# SecFinOps Auto-Fix Validator
-#
-# For the TARGET repo (e.g. github.com/Nikesh-Uprety/XSS_Mediu):
-# 1. Copy this file to that repo as .github/workflows/secfinops-autofix.yml
-# 2. In repo Settings → General: enable "Allow squash merging" and "Automatically delete head branches"
-
 name: SecFinOps Auto-Fix Validator
 
 on:
   pull_request:
     branches: [main]
     types: [opened, synchronize]
+
+permissions:
+  contents: write
+  pull-requests: write
 
 jobs:
   detect-autofix-pr:
@@ -48,29 +46,38 @@ jobs:
 
       - name: Security scan on fixed code
         run: |
-          npx semgrep --config=auto --error --json > semgrep-results.json || true
-          python3 -c "
+          echo "Running Semgrep scan..."
+          npx semgrep --config=auto --error --json > semgrep-results.json
+
+          python3 <<EOF
           import json, sys
           try:
-            with open('semgrep-results.json') as f:
-              results = json.load(f)
-          except Exception:
-            print('No semgrep results. Skipping XSS check.')
-            sys.exit(0)
-          xss_findings = [r for r in results.get('results', [])
-                          if 'xss' in r.get('check_id', '').lower()]
-          if xss_findings:
-            print(f'XSS vulnerabilities still found: {len(xss_findings)}')
-            sys.exit(1)
-          print('No XSS findings. Fix validated.')
-          "
+              with open('semgrep-results.json') as f:
+                  results = json.load(f)
+          except Exception as e:
+              print(f"Failed to parse semgrep results: {e}")
+              sys.exit(1)
 
-      - name: Run unit tests
+          xss_findings = [
+              r for r in results.get("results", [])
+              if "xss" in r.get("check_id", "").lower()
+          ]
+
+          if xss_findings:
+              print(f"XSS vulnerabilities still found: {len(xss_findings)}")
+              sys.exit(1)
+
+          print("No XSS findings. Fix validated.")
+          EOF
+
+      - name: Run unit tests (if present)
         run: |
-          if [ -f package.json ] && node -e "const p=require('./package.json'); process.exit((p.scripts && p.scripts.test) ? 0 : 1)"; then
+          if node -e "const p=require('./package.json'); process.exit(p.scripts && p.scripts.test ? 0 : 1)" 2>/dev/null
+          then
+            echo "Test script found. Running tests..."
             npm test -- --passWithNoTests
           else
-            echo "No test script in package.json; skipping tests."
+            echo "No test script found. Skipping tests."
           fi
 
       - name: Post validation result comment

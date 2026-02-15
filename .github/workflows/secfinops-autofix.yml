@@ -1,14 +1,15 @@
+# SecFinOps Auto-Fix Validator
+#
+# For the TARGET repo (e.g. github.com/Nikesh-Uprety/XSS_Mediu):
+# 1. Copy this file to that repo as .github/workflows/secfinops-autofix.yml
+# 2. In repo Settings → General: enable "Allow squash merging" and "Automatically delete head branches"
+
 name: SecFinOps Auto-Fix Validator
 
 on:
   pull_request:
     branches: [main]
     types: [opened, synchronize]
-
-permissions:
-  contents: write
-  pull-requests: write
-  checks: read
 
 jobs:
   detect-autofix-pr:
@@ -30,24 +31,20 @@ jobs:
     if: needs.detect-autofix-pr.outputs.is_autofix == 'true'
     runs-on: ubuntu-latest
 
-    permissions:
-      contents: write
-      pull-requests: write
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           ref: ${{ github.head_ref }}
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: "20"
+          cache: "npm"
 
       - name: Install dependencies
-        run: npm ci || npm install
+        run: npm ci
 
       - name: Security scan on fixed code
         run: |
@@ -70,18 +67,16 @@ jobs:
 
       - name: Run unit tests
         run: |
-          if npm run 2>&1 | grep -q "test"; then
+          if [ -f package.json ] && node -e "const p=require('./package.json'); process.exit((p.scripts && p.scripts.test) ? 0 : 1)"; then
             npm test -- --passWithNoTests
           else
-            echo "No test script found in package.json — skipping tests"
-            exit 0
+            echo "No test script in package.json; skipping tests."
           fi
 
       - name: Post validation result comment
         if: always()
         uses: actions/github-script@v7
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const status = '${{ job.status }}';
             const emoji = status === 'success' ? '✅' : '❌';
@@ -89,24 +84,25 @@ jobs:
               ? '**SecFinOps AutoFix Validated** ✅\n\nSecurity scan passed. No XSS findings detected. Auto-merging.'
               : '**SecFinOps AutoFix Validation Failed** ❌\n\nSecurity issues still detected or tests failed. Manual review required.';
 
-            try {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-                body: message
-              });
-            } catch (error) {
-              console.log('Could not post comment:', error.message);
-            }
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: message
+            });
 
       - name: Auto-merge if validated
         if: success()
-        run: |
-          gh pr merge ${{ github.event.pull_request.number }} \
-            --squash \
-            --auto \
-            --delete-branch \
-            --subject "fix: SecFinOps AutoFix - ${{ github.event.pull_request.title }}"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            await github.rest.pulls.merge({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+              merge_method: 'squash',
+              commit_title: `fix: SecFinOps AutoFix - ${context.payload.pull_request.title}`,
+              commit_message: 'Automatically validated and merged by SecFinOps AutoFix pipeline'
+            });
+            console.log('PR auto-merged successfully');

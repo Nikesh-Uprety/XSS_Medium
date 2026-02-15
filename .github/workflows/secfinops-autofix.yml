@@ -8,6 +8,7 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  security-events: write
 
 jobs:
   detect-autofix-pr:
@@ -30,7 +31,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
+      - name: Checkout PR branch
         uses: actions/checkout@v4
         with:
           ref: ${{ github.head_ref }}
@@ -39,23 +40,35 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "20"
-          cache: "npm"
+          cache: npm
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Security scan on fixed code
+      # -------------------------------
+      # Install Semgrep properly
+      # -------------------------------
+      - name: Install Semgrep
+        run: |
+          python3 -m pip install --upgrade pip
+          pip install semgrep
+
+      # -------------------------------
+      # Run Semgrep and fail only on XSS
+      # -------------------------------
+      - name: Security scan (XSS validation)
         run: |
           echo "Running Semgrep scan..."
-          npx semgrep --config=auto --error --json > semgrep-results.json
+          semgrep --config=auto --json > semgrep-results.json
 
           python3 <<EOF
           import json, sys
+
           try:
-              with open('semgrep-results.json') as f:
+              with open("semgrep-results.json") as f:
                   results = json.load(f)
           except Exception as e:
-              print(f"Failed to parse semgrep results: {e}")
+              print(f"Failed to parse Semgrep results: {e}")
               sys.exit(1)
 
           xss_findings = [
@@ -70,6 +83,9 @@ jobs:
           print("No XSS findings. Fix validated.")
           EOF
 
+      # -------------------------------
+      # Run tests only if they exist
+      # -------------------------------
       - name: Run unit tests (if present)
         run: |
           if node -e "const p=require('./package.json'); process.exit(p.scripts && p.scripts.test ? 0 : 1)" 2>/dev/null
@@ -80,13 +96,15 @@ jobs:
             echo "No test script found. Skipping tests."
           fi
 
+      # -------------------------------
+      # Post validation result
+      # -------------------------------
       - name: Post validation result comment
         if: always()
         uses: actions/github-script@v7
         with:
           script: |
             const status = '${{ job.status }}';
-            const emoji = status === 'success' ? '✅' : '❌';
             const message = status === 'success'
               ? '**SecFinOps AutoFix Validated** ✅\n\nSecurity scan passed. No XSS findings detected. Auto-merging.'
               : '**SecFinOps AutoFix Validation Failed** ❌\n\nSecurity issues still detected or tests failed. Manual review required.';
@@ -98,7 +116,10 @@ jobs:
               body: message
             });
 
-      - name: Auto-merge if validated
+      # -------------------------------
+      # Auto-merge if everything passed
+      # -------------------------------
+      - name: Auto-merge PR
         if: success()
         uses: actions/github-script@v7
         with:
@@ -112,4 +133,5 @@ jobs:
               commit_title: `fix: SecFinOps AutoFix - ${context.payload.pull_request.title}`,
               commit_message: 'Automatically validated and merged by SecFinOps AutoFix pipeline'
             });
-            console.log('PR auto-merged successfully');
+
+            console.log("PR auto-merged successfully.");

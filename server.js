@@ -1,5 +1,6 @@
 require('dotenv').config();
 const express = require('express');
+const csrf = require('csurf');
 const sqlite3 = require('sqlite3').verbose();
 const axios = require('axios');
 const app = express();
@@ -25,6 +26,7 @@ setInterval(() => {
 // Middleware to parse form data and serve static content
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
+app.use(csrf());
 
 // Basic XSS filter (blocks common payloads but allows specific vectors)
 function filterXSS(input) {
@@ -33,6 +35,7 @@ function filterXSS(input) {
     .replace(/<\/script/gi, '</script')
     .replace(/on\w+ *= */gi, 'forbidden')
     .replace(/javascript:/gi, 'forbidden:')
+
     .replace(/alert/gi, 'forbidden');
 }
 
